@@ -1,0 +1,17 @@
+{
+  "name": "quotes-scraper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright scraper for quotes.toscrape.com/scroll (DevOps lab 1)",
+  "main": "src/scrape.js",
+  "scripts": {
+    "start": "node src/scrape.js",
+    "scrape": "node src/scrape.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "playwright": "^1.55.0"
+  }
+}
