@@ -43,7 +43,11 @@ async function extractQuotes(page) {
 }
 
 async function main() {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    // системный Chromium из apt (/usr/bin/chromium), не браузер Playwright
+    executablePath: process.env.CHROMIUM_PATH || "/usr/bin/chromium",
+  });
   const page = await browser.newPage();
 
   try {
