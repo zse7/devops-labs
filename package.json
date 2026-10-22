@@ -2,7 +2,7 @@
   "name": "quotes-scraper",
   "version": "1.0.0",
   "private": true,
-  "description": "Playwright scraper for quotes.toscrape.com/scroll (DevOps lab 1)",
+  "description": "Playwright scraper: reads a job from SQS and writes JSON to S3",
   "main": "src/scrape.js",
   "scripts": {
     "start": "node src/scrape.js",
@@ -12,6 +12,8 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1155.0",
+    "@aws-sdk/client-sqs": "^3.1155.0",
     "playwright": "^1.55.0"
   }
 }
