@@ -1,6 +1,6 @@
 variable "bucket_name" {
   type        = string
-  description = "Имя шкафа S3, куда скрапер потом положит JSON"
+  description = "Имя бакета S3, куда скрапер сохраняет JSON"
   default     = "quotes-results"
 }
 

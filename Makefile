@@ -6,17 +6,23 @@ export DOCKER_BUILDKIT ?= 1
 build:
 	docker build -t $(IMAGE) .
 
+# сбор образа, создание инфры и запуск скраппера
+# bucket - читает выходное значение bucket_name (quotes-results)
+# queue - получает URL очереди и меняет localhost на floci
 deploy: build provision
+	set -eu; \
 	bucket=$$(terraform -chdir=infra output -raw bucket_name); \
-	queue=$$(terraform -chdir=infra output -raw queue_url | sed 's#://localhost:#://floci:#'); \
+	queue=$$(terraform -chdir=infra output -raw queue_url); \
+	queue=$$(printf '%s' "$$queue" | sed 's#://localhost:#://floci:#'); \
 	echo "Starting scraper with bucket=$$bucket queue=$$queue"; \
 	BUCKET_NAME="$$bucket" QUEUE_URL="$$queue" \
 		docker compose --profile app up -d --no-deps --force-recreate scraper
 
 run:
+	set -eu; \
 	queue=$$(terraform -chdir=infra output -raw queue_url); \
 	bucket=$$(terraform -chdir=infra output -raw bucket_name); \
-	docker inspect -f '{{.State.Running}}' quotes-worker | grep -qx true || { echo 'Сначала make deploy'; exit 1; }; \
+	docker inspect -f '{{.State.Running}}' quotes-worker 2>/dev/null | grep -qx true || { echo 'Скрапер не запущен. Выполни make deploy, затем make run'; exit 1; }; \
 	before=$$(docker logs quotes-worker 2>&1 | grep -c 'deleted the message' || true); \
 	echo "Sending one job to $$queue"; \
 	curl -fsS -X POST "$$queue" \
@@ -42,6 +48,7 @@ clean:
 	-docker rmi $(IMAGE)
 	rm -rf out
 
+# проверка формата, конфигурации и плана terraform
 ci:
 	terraform -chdir=infra fmt -check -recursive
 	docker compose up -d --wait floci
@@ -49,13 +56,15 @@ ci:
 	terraform -chdir=infra validate
 	terraform -chdir=infra plan -input=false
 
+# запуск floci, создание S3 и SQS terraform-ом
 provision:
 	docker compose up -d --wait floci
 	terraform -chdir=infra init -input=false
 	terraform -chdir=infra apply -input=false -auto-approve
 
+# удаление ресурсов (содержимое бакета будет удаляться) и остановка контейнеров
 destroy:
 	docker compose up -d --wait floci
 	terraform -chdir=infra init -input=false
 	terraform -chdir=infra destroy -input=false -auto-approve
-	docker compose down
+	docker compose --profile app down

@@ -81,8 +81,7 @@ async function extractQuotes(page) {
 
 async function scrapeQuotes() {
   const browser = await chromium.launch({
-    headless: true,
-    // системный Chromium из apt (/usr/bin/chromium), не браузер Playwright
+    headless: true, // без видимого окна
     executablePath: process.env.CHROMIUM_PATH || "/usr/bin/chromium",
   });
   const page = await browser.newPage();
@@ -102,6 +101,7 @@ async function scrapeQuotes() {
   }
 }
 
+// сохранение в S3
 async function saveToBucket(s3, bucket, quotes) {
   await s3.send(
     new PutObjectCommand({
@@ -113,13 +113,14 @@ async function saveToBucket(s3, bucket, quotes) {
   );
 }
 
+// получить сообщение (SQS)
 async function receiveJob(sqs, queueUrl) {
   const response = await sqs.send(
     new ReceiveMessageCommand({
       QueueUrl: queueUrl,
       MaxNumberOfMessages: 1,
-      WaitTimeSeconds: RECEIVE_WAIT_SECONDS,
-      VisibilityTimeout: VISIBILITY_TIMEOUT_SECONDS,
+      WaitTimeSeconds: RECEIVE_WAIT_SECONDS, // ждать новое сообщение, если очередь пуста
+      VisibilityTimeout: VISIBILITY_TIMEOUT_SECONDS, // временно скрыть полученное сообщение от других обработчиков
     })
   );
   return response.Messages?.[0];
@@ -129,11 +130,12 @@ async function deleteJob(sqs, queueUrl, receiptHandle) {
   await sqs.send(
     new DeleteMessageCommand({
       QueueUrl: queueUrl,
-      ReceiptHandle: receiptHandle,
+      ReceiptHandle: receiptHandle, // SQS выдаёт при получении сообщения
     })
   );
 }
 
+// удаляем задание из SQS только после успешного сохранения результата в S3
 async function handleJob(config, s3, sqs, message) {
   const quotes = await scrapeQuotes();
   await saveToBucket(s3, config.bucket, quotes);
@@ -148,7 +150,6 @@ async function main() {
   const s3 = new S3Client({
     ...clientOptions(config),
     forcePathStyle: true,
-    // Floci принимает обычный PutObject. Новый AWS SDK иначе шлёт лишние checksum-заголовки.
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
   });
@@ -164,6 +165,7 @@ async function main() {
   console.log(`Waiting for a job on ${config.queueUrl}`);
 
   while (!stopping) {
+    // спроси SQS о задании
     const message = await receiveJob(sqs, config.queueUrl);
     if (!message) {
       continue;

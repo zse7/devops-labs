@@ -11,7 +11,7 @@ ENV NODE_ENV=production
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/* 
+    && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
 COPY --from=deps /app/node_modules ./node_modules
