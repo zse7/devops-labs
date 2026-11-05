@@ -1,0 +1,20 @@
+services:
+  floci:
+    image: floci/floci:2.2.0
+    ports:
+      - "4566:4566"
+
+  scraper:
+    image: quotes-scraper
+    container_name: quotes-worker
+    profiles: ["app"]
+    environment:
+      AWS_ENDPOINT_URL: http://floci:4566
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      BUCKET_NAME: ${BUCKET_NAME:-}
+      QUEUE_URL: ${QUEUE_URL:-}
+    depends_on:
+      - floci
+    restart: unless-stopped
