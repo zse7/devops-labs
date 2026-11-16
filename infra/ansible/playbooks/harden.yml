@@ -1,0 +1,27 @@
+---
+# Bootstrap заканчивается реальным новым входом admin и проверкой sudo.
+- name: Prepare and verify admin before changing access
+  ansible.builtin.import_playbook: bootstrap.yml
+
+- name: Harden SSH through the verified admin account
+  hosts: lab
+  gather_facts: false
+  become: true
+  vars:
+    ansible_user: admin
+  roles:
+    - ssh_hardening
+  post_tasks:
+    - name: Close the existing admin connection
+      ansible.builtin.meta: reset_connection
+
+    - name: Verify a new admin connection after hardening
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+        connect_timeout: 10
+      become: false
+
+    - name: Verify sudo after hardening
+      ansible.builtin.command: sudo -n true
+      become: false
+      changed_when: false

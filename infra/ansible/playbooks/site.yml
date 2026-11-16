@@ -1,0 +1,15 @@
+---
+- name: Prepare admin and harden SSH
+  ansible.builtin.import_playbook: harden.yml
+
+- name: Install the container runtime
+  hosts: lab
+  gather_facts: true
+  become: true
+  vars:
+    ansible_user: admin
+  roles:
+    - docker_engine
+
+- name: Verify the container runtime
+  ansible.builtin.import_playbook: verify_docker.yml

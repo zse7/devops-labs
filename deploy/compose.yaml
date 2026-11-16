@@ -1,0 +1,55 @@
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "/etc/redis/redis.conf"]
+    restart: unless-stopped
+    networks: [backend]
+    volumes:
+      - redis_data:/data
+      - ./redis:/etc/redis:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  scraper:
+    image: ${SCRAPER_IMAGE:?Set SCRAPER_IMAGE}
+    user: "1000:1000"
+    init: true
+    networks: [backend, default]
+    restart: ${SCRAPER_RESTART_POLICY:-unless-stopped}
+    stop_grace_period: 120s
+    environment:
+      REDIS_URL: redis://redis:6379
+      RESULTS_DIR: /results
+      SCRAPER_PROXY_SERVER: ${SCRAPER_PROXY_SERVER:-}
+      ENABLE_FAULT_TESTS: ${ENABLE_FAULT_TESTS:-0}
+    volumes:
+      - ./results:/results
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "src/healthcheck.js"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 10s
+  nginx:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    volumes:
+      - ./results:/usr/share/nginx/html/results:ro
+      - ./nginx:/etc/nginx/conf.d:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+volumes:
+  redis_data:
+networks:
+  backend:
+    internal: true

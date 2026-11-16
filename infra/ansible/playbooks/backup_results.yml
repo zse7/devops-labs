@@ -1,0 +1,31 @@
+---
+- name: Back up generated results before the disposable VM is removed
+  hosts: lab
+  gather_facts: false
+  become: true
+  vars:
+    ansible_user: admin
+    scraper_backup_dir: "{{ lookup('ansible.builtin.env', 'LAB_BACKUP_DIR') }}"
+    scraper_backup_root: "{{ (playbook_dir + '/../../../out') | realpath }}"
+  tasks:
+    - name: Require a backup destination inside this repository
+      ansible.builtin.assert:
+        that:
+          - scraper_backup_dir.startswith(scraper_backup_root + '/')
+          - "'..' not in scraper_backup_dir.split('/')"
+
+    - name: Find only regular JSON results
+      ansible.builtin.find:
+        paths: /srv/quotes-scraper/results
+        patterns: '*.json'
+        file_type: file
+      register: scraper_backup_files
+
+    - name: Fetch each result without credentials or temporary files
+      ansible.builtin.fetch:
+        src: "{{ item.path }}"
+        dest: "{{ scraper_backup_dir }}/results/"
+        flat: true
+      loop: "{{ scraper_backup_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"

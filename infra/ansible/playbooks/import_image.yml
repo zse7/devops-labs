@@ -1,0 +1,83 @@
+---
+- name: Import a locally cached image of the same source and architecture
+  hosts: lab
+  gather_facts: false
+  become: true
+  vars:
+    ansible_user: admin
+  tasks:
+    - name: Calculate the source digest on the control machine
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../../source_digest.py"
+      delegate_to: localhost
+      become: false
+      register: scraper_import_digest
+      changed_when: false
+
+    - name: Read the local image architecture
+      ansible.builtin.command:
+        argv:
+          - docker
+          - image
+          - inspect
+          - "quotes-scraper:{{ scraper_import_digest.stdout }}"
+          - --format
+          - "{{ '{{.Architecture}}' }}"
+      delegate_to: localhost
+      become: false
+      register: scraper_import_arch
+      changed_when: false
+
+    - name: Read the VM package architecture
+      ansible.builtin.command: dpkg --print-architecture
+      register: scraper_import_vm_arch
+      changed_when: false
+
+    - name: Refuse importing an image for a different architecture
+      ansible.builtin.assert:
+        that:
+          - scraper_import_arch.stdout == scraper_import_vm_arch.stdout
+
+    - name: Stop only the matching lab build before importing its replacement
+      ansible.builtin.command:
+        argv:
+          - pkill
+          - --signal
+          - TERM
+          - --full
+          - >-
+            ^/usr/libexec/docker/cli-plugins/docker-buildx buildx build --tag
+            quotes-scraper:{{ scraper_import_digest.stdout }}
+            /srv/quotes-scraper/builds/{{ scraper_import_digest.stdout }}$
+      register: scraper_import_stop
+      changed_when: scraper_import_stop.rc == 0
+      failed_when: scraper_import_stop.rc not in [0, 1]
+
+    - name: Prepare the application directory for an initial import
+      ansible.builtin.file:
+        path: /srv/quotes-scraper
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Transfer the exported image archive
+      ansible.builtin.copy:
+        src: >-
+          {{ playbook_dir }}/../../../.lab/scraper-image.tar
+        dest: /srv/quotes-scraper/import-image.tar
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Load the image into the VM Docker daemon
+      ansible.builtin.command:
+        argv: [docker, load, --input, /srv/quotes-scraper/import-image.tar]
+      changed_when: true
+
+    - name: Remove the transferred scratch archive
+      ansible.builtin.file:
+        path: /srv/quotes-scraper/import-image.tar
+        state: absent

@@ -1,0 +1,24 @@
+---
+- name: Create the permanent administrator
+  ansible.builtin.user:
+    name: admin
+    shell: /bin/bash
+    create_home: true
+    password_lock: true
+    groups: sudo
+    append: true
+
+- name: Authorize the lab key for admin
+  ansible.posix.authorized_key:
+    user: admin
+    state: present
+    key: "{{ lookup('ansible.builtin.file', bootstrap_public_key_path) }}"
+
+- name: Configure sudo for key-based administration
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/90-lab-admin
+    content: "admin ALL=(ALL:ALL) NOPASSWD: ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s

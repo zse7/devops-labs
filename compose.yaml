@@ -6,6 +6,7 @@ services:
 
   scraper:
     image: quotes-scraper
+    command: ["node", "src/scrape-aws.js"]
     container_name: quotes-worker
     profiles: ["app"]
     environment:
@@ -15,6 +16,7 @@ services:
       AWS_SECRET_ACCESS_KEY: test
       BUCKET_NAME: ${BUCKET_NAME:-}
       QUEUE_URL: ${QUEUE_URL:-}
+      SCRAPER_PROXY_SERVER: ${SCRAPER_PROXY_SERVER:-}
     depends_on:
       - floci
     restart: unless-stopped

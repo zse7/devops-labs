@@ -1,0 +1,14 @@
+#cloud-config
+---
+# Стандартный пользователь нужен Multipass для управления VM.
+users:
+  - default
+  - name: lab-bootstrap
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - "__LAB_SSH_PUBLIC_KEY__"
+
+packages:
+  - python3

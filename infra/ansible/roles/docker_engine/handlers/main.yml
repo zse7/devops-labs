@@ -1,0 +1,5 @@
+---
+- name: Refresh the Docker package index
+  ansible.builtin.apt:
+    update_cache: true
+    lock_timeout: 180

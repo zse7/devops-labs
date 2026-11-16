@@ -1,0 +1,5 @@
+---
+scraper_root: /srv/quotes-scraper
+scraper_http_port: 8080
+scraper_proxy_server: >-
+  {{ lookup('ansible.builtin.env', 'SCRAPER_PROXY_SERVER') }}

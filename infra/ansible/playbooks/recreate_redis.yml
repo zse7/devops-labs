@@ -1,0 +1,20 @@
+---
+- name: Recreate only Redis to verify persistent storage
+  hosts: lab
+  gather_facts: false
+  become: true
+  vars:
+    ansible_user: admin
+  tasks:
+    - name: Replace the Redis container while retaining its named volume
+      community.docker.docker_compose_v2:
+        project_src: /srv/quotes-scraper
+        project_name: quotes-scraper
+        services: [redis]
+        dependencies: false
+        state: present
+        recreate: always
+        build: never
+        pull: never
+        wait: true
+        wait_timeout: 90

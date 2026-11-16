@@ -1,0 +1,5 @@
+---
+- name: Reload SSH after validation
+  ansible.builtin.service:
+    name: ssh
+    state: reloaded

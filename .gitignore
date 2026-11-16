@@ -1,4 +1,10 @@
 node_modules/
+LAB3_PLAN.md
+.venv/
+.lab/
+infra/ansible/inventories/lab/
+infra/ansible/collections/
+__pycache__/
 out/
 *.log
 .DS_Store

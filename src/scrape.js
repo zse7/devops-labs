@@ -1,186 +1,203 @@
-const { chromium } = require("playwright");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const fs = require("node:fs/promises");
+const os = require("node:os");
+const { randomUUID } = require("node:crypto");
+const { createClient } = require("redis");
+const { scrapeQuotes } = require("./browser");
 const {
-  SQSClient,
-  ReceiveMessageCommand,
-  DeleteMessageCommand,
-} = require("@aws-sdk/client-sqs");
+  validateJob,
+  readResult,
+  saveResult,
+  clearTemporary,
+} = require("./results");
 
-const TARGET_URL = "https://quotes.toscrape.com/scroll";
-const OBJECT_KEY = "result.json";
-const MAX_SCROLL_ROUNDS = 30;
-const SCROLL_PAUSE_MS = 800;
-const RECEIVE_WAIT_SECONDS = 10;
-const VISIBILITY_TIMEOUT_SECONDS = 180;
-
-function requireEnv(name) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(
-      `Нет переменной окружения ${name}. Адрес облака, ключи, имя шкафа и адрес очереди приходят снаружи.`
-    );
-  }
-  return value;
-}
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function loadConfig() {
-  return {
-    endpoint: requireEnv("AWS_ENDPOINT_URL"),
-    region: requireEnv("AWS_REGION"),
-    accessKeyId: requireEnv("AWS_ACCESS_KEY_ID"),
-    secretAccessKey: requireEnv("AWS_SECRET_ACCESS_KEY"),
-    bucket: requireEnv("BUCKET_NAME"),
-    queueUrl: requireEnv("QUEUE_URL"),
+  const config = {
+    redisUrl: process.env.REDIS_URL || "redis://redis:6379",
+    resultsDir: process.env.RESULTS_DIR || "/results",
+    stream: "jobs",
+    group: "scrapers",
+    consumer: `${os.hostname()}-${randomUUID()}`,
+    claimIdleMs: Number(process.env.CLAIM_IDLE_MS || 15000),
+    heartbeatMs: Number(process.env.HEARTBEAT_MS || 3000),
   };
-}
-
-function clientOptions(config) {
-  return {
-    region: config.region,
-    endpoint: config.endpoint,
-    credentials: {
-      accessKeyId: config.accessKeyId,
-      secretAccessKey: config.secretAccessKey,
-    },
-  };
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function loadAllQuotes(page) {
-  let previousCount = 0;
-
-  for (let round = 0; round < MAX_SCROLL_ROUNDS; round += 1) {
-    await page.evaluate(() => {
-      window.scrollTo(0, document.body.scrollHeight);
-    });
-    await sleep(SCROLL_PAUSE_MS);
-
-    const count = await page.locator(".quote").count();
-    if (count > 0 && count === previousCount) {
-      break;
+  for (const key of ["claimIdleMs", "heartbeatMs"]) {
+    if (!Number.isSafeInteger(config[key]) || config[key] <= 0) {
+      throw new Error(`${key} must be a positive integer`);
     }
-    previousCount = count;
+  }
+  if (config.claimIdleMs < config.heartbeatMs * 3) {
+    throw new Error("CLAIM_IDLE_MS must be at least three heartbeat intervals");
+  }
+  return config;
+}
+
+function fieldsToObject(fields) {
+  const entries = [];
+  for (let i = 0; i < fields.length; i += 2)
+    entries.push([fields[i], fields[i + 1]]);
+  return Object.fromEntries(entries);
+}
+
+async function faultCheckpoint(client, jobId, phase) {
+  if (process.env.ENABLE_FAULT_TESTS !== "1") return;
+  // Одноразовый маркер нужен для воспроизводимого теста падения.
+  const shouldCrash = await client.sendCommand([
+    "EVAL",
+    "if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) else return 0 end",
+    "1",
+    `lab:fault:${jobId}`,
+    phase,
+  ]);
+  if (shouldCrash === 1) {
+    console.log(`FAULT ${phase} ${jobId}`);
+    process.kill(process.pid, "SIGKILL");
   }
 }
 
-async function extractQuotes(page) {
-  return page.$$eval(".quote", (elements) =>
-    elements.map((el) => {
-      const text = el.querySelector(".text")?.textContent?.trim() ?? "";
-      const author = el.querySelector(".author")?.textContent?.trim() ?? "";
-      const tags = Array.from(el.querySelectorAll(".tag")).map((tag) =>
-        tag.textContent.trim()
-      );
-      return { text, author, tags };
-    })
-  );
-}
-
-async function scrapeQuotes() {
-  const browser = await chromium.launch({
-    headless: true, // без видимого окна
-    executablePath: process.env.CHROMIUM_PATH || "/usr/bin/chromium",
-  });
-  const page = await browser.newPage();
-
+async function handleJob(client, config, entry, scrape, checkpoint) {
+  const [messageId, fields] = entry;
+  const { jobId, url } = validateJob(fieldsToObject(fields));
+  console.log(`RECEIVED ${jobId} ${messageId}`);
+  let heartbeatError;
+  let heartbeatRunning = false;
+  const heartbeat = setInterval(async () => {
+    if (heartbeatRunning) return;
+    heartbeatRunning = true;
+    try {
+      await client.sendCommand([
+        "XCLAIM",
+        config.stream,
+        config.group,
+        config.consumer,
+        "0",
+        messageId,
+        "JUSTID",
+      ]);
+    } catch (error) {
+      heartbeatError = error;
+    } finally {
+      heartbeatRunning = false;
+    }
+  }, config.heartbeatMs);
   try {
-    await page.goto(TARGET_URL, { waitUntil: "networkidle" });
-    await page.waitForSelector(".quote", { timeout: 15000 });
-    await loadAllQuotes(page);
-
-    const quotes = await extractQuotes(page);
-    if (!quotes.length) {
-      throw new Error("No quotes found — page structure may have changed");
+    await checkpoint(client, jobId, "after-receive");
+    await clearTemporary(config.resultsDir, jobId);
+    const existing = await readResult(config.resultsDir, jobId);
+    if (!existing) {
+      const quotes = await scrape(url);
+      if (heartbeatError) throw heartbeatError;
+      await saveResult(config.resultsDir, jobId, quotes);
+      console.log(`SAVED ${jobId} ${quotes.length}`);
+    } else {
+      console.log(`REUSED ${jobId} ${existing.length}`);
     }
-    return quotes;
+    await checkpoint(client, jobId, "after-save");
+    if (heartbeatError) throw heartbeatError;
+    await client.sendCommand(["XACK", config.stream, config.group, messageId]);
+    console.log(`ACKED ${jobId} ${messageId}`);
   } finally {
-    await browser.close();
+    clearInterval(heartbeat);
+    await clearTemporary(config.resultsDir, jobId);
   }
 }
 
-// сохранение в S3
-async function saveToBucket(s3, bucket, quotes) {
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: bucket,
-      Key: OBJECT_KEY,
-      Body: JSON.stringify(quotes, null, 2),
-      ContentType: "application/json",
-    })
-  );
-}
-
-// получить сообщение (SQS)
-async function receiveJob(sqs, queueUrl) {
-  const response = await sqs.send(
-    new ReceiveMessageCommand({
-      QueueUrl: queueUrl,
-      MaxNumberOfMessages: 1,
-      WaitTimeSeconds: RECEIVE_WAIT_SECONDS, // ждать новое сообщение, если очередь пуста
-      VisibilityTimeout: VISIBILITY_TIMEOUT_SECONDS, // временно скрыть полученное сообщение от других обработчиков
-    })
-  );
-  return response.Messages?.[0];
-}
-
-async function deleteJob(sqs, queueUrl, receiptHandle) {
-  await sqs.send(
-    new DeleteMessageCommand({
-      QueueUrl: queueUrl,
-      ReceiptHandle: receiptHandle, // SQS выдаёт при получении сообщения
-    })
-  );
-}
-
-// удаляем задание из SQS только после успешного сохранения результата в S3
-async function handleJob(config, s3, sqs, message) {
-  const quotes = await scrapeQuotes();
-  await saveToBucket(s3, config.bucket, quotes);
-  await deleteJob(sqs, config.queueUrl, message.ReceiptHandle);
-  console.log(
-    `Saved ${quotes.length} quotes to s3://${config.bucket}/${OBJECT_KEY} and deleted the message`
-  );
-}
-
-async function main() {
-  const config = loadConfig();
-  const s3 = new S3Client({
-    ...clientOptions(config),
-    forcePathStyle: true,
-    requestChecksumCalculation: "WHEN_REQUIRED",
-    responseChecksumValidation: "WHEN_REQUIRED",
+async function runWorker({
+  config = loadConfig(),
+  scrape = scrapeQuotes,
+  checkpoint = faultCheckpoint,
+} = {}) {
+  await fs.mkdir(config.resultsDir, { recursive: true });
+  await fs.rm("/tmp/quotes-scraper.ready", { force: true });
+  const client = createClient({
+    url: config.redisUrl,
+    disableOfflineQueue: true,
+    socket: {
+      reconnectStrategy: (retries) =>
+        retries < 10
+          ? Math.min(100 * 2 ** retries, 2000)
+          : new Error("Redis unavailable"),
+    },
   });
-  const sqs = new SQSClient(clientOptions(config));
-
+  const reader = client.duplicate();
+  client.on("error", (error) => console.error("Redis:", error.message));
+  reader.on("error", (error) => console.error("Redis reader:", error.message));
   let stopping = false;
   const requestStop = () => {
     stopping = true;
   };
   process.on("SIGTERM", requestStop);
   process.on("SIGINT", requestStop);
-
-  console.log(`Waiting for a job on ${config.queueUrl}`);
-
-  while (!stopping) {
-    // спроси SQS о задании
-    const message = await receiveJob(sqs, config.queueUrl);
-    if (!message) {
-      continue;
-    }
-
+  try {
+    await client.connect();
+    await reader.connect();
     try {
-      await handleJob(config, s3, sqs, message);
+      await client.sendCommand([
+        "XGROUP",
+        "CREATE",
+        config.stream,
+        config.group,
+        "0",
+        "MKSTREAM",
+      ]);
     } catch (error) {
-      console.error("Job failed, message stays in the queue");
-      console.error(error);
+      if (!error.message.startsWith("BUSYGROUP")) throw error;
     }
+    await fs.writeFile("/tmp/quotes-scraper.ready", config.consumer);
+    console.log(`READY ${config.consumer}`);
+    let cursor = "0-0";
+    while (!stopping) {
+      try {
+        const claimed = await reader.sendCommand([
+          "XAUTOCLAIM",
+          config.stream,
+          config.group,
+          config.consumer,
+          String(config.claimIdleMs),
+          cursor,
+          "COUNT",
+          "1",
+        ]);
+        cursor = claimed[0];
+        let entry = claimed[1][0];
+        if (!entry) {
+          const streams = await reader.sendCommand([
+            "XREADGROUP",
+            "GROUP",
+            config.group,
+            config.consumer,
+            "COUNT",
+            "1",
+            "BLOCK",
+            "1000",
+            "STREAMS",
+            config.stream,
+            ">",
+          ]);
+          entry = streams?.[0]?.[1]?.[0];
+        }
+        if (entry) await handleJob(client, config, entry, scrape, checkpoint);
+      } catch (error) {
+        if (!reader.isOpen || !client.isOpen) throw error;
+        console.error("Job not acknowledged:", error.message);
+        await sleep(1000);
+      }
+    }
+  } finally {
+    process.off("SIGTERM", requestStop);
+    process.off("SIGINT", requestStop);
+    if (reader.isOpen) reader.destroy();
+    if (client.isOpen) client.destroy();
+    await fs.rm("/tmp/quotes-scraper.ready", { force: true });
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (require.main === module) {
+  runWorker().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { loadConfig, handleJob, runWorker };

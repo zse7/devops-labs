@@ -1,0 +1,50 @@
+---
+- name: Install the SSH access policy
+  ansible.builtin.copy:
+    src: 00-lab.conf
+    dest: /etc/ssh/sshd_config.d/00-lab.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Reload SSH after validation
+
+- name: Validate the complete SSH configuration
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+
+- name: Read the effective SSH policy for admin
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -T
+      - -C
+      - "user=admin,host=localhost,addr={{ ansible_host }}"
+  register: ssh_hardening_effective
+  changed_when: false
+
+- name: Verify that the access policy takes effect before reloading
+  ansible.builtin.assert:
+    that:
+      - item in ssh_hardening_effective.stdout_lines
+  loop:
+    - permitrootlogin no
+    - passwordauthentication no
+    - kbdinteractiveauthentication no
+    - pubkeyauthentication yes
+    - authenticationmethods publickey
+    - allowusers admin
+
+- name: Apply the verified SSH policy
+  ansible.builtin.meta: flush_handlers
+
+- name: Disable the temporary bootstrap shell and password
+  ansible.builtin.user:
+    name: lab-bootstrap
+    shell: /usr/sbin/nologin
+    password_lock: true
+
+- name: Remove the temporary bootstrap authorized keys
+  ansible.builtin.file:
+    path: /home/lab-bootstrap/.ssh/authorized_keys
+    state: absent

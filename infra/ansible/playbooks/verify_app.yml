@@ -1,0 +1,124 @@
+---
+- name: Verify the application configuration and readiness
+  hosts: lab
+  gather_facts: false
+  become: true
+  vars:
+    ansible_user: admin
+    scraper_root: /srv/quotes-scraper
+  tasks:
+    - name: Read container state without exposing environment variables
+      ansible.builtin.command:
+        argv: [python3, "{{ scraper_root }}/app_inspect.py"]
+      register: scraper_inspection
+      changed_when: false
+
+    - name: Parse the container summary
+      ansible.builtin.set_fact:
+        scraper_state: "{{ scraper_inspection.stdout | from_json }}"
+
+    - name: Check that exactly three healthy services are running
+      ansible.builtin.assert:
+        that:
+          - scraper_state.keys() | sort == ['nginx', 'redis', 'scraper']
+          - item.value.state == 'running'
+          - item.value.health == 'healthy'
+        quiet: true
+      loop: "{{ scraper_state | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Check that only Nginx publishes a port
+      ansible.builtin.assert:
+        that:
+          - scraper_state.redis.ports | length == 0
+          - scraper_state.scraper.ports | length == 0
+          - scraper_state.nginx.ports.keys() | list == ['80/tcp']
+          - scraper_state.scraper.user == '1000:1000'
+
+    - name: Verify that Redis is isolated from the HTTP network
+      ansible.builtin.assert:
+        that:
+          - scraper_state.redis.networks.values() | list == [true]
+          - >-
+            scraper_state.redis.networks.keys() | list |
+            intersect(scraper_state.nginx.networks.keys() | list) | length == 0
+
+    - name: Check result mounts and persistent Redis storage
+      ansible.builtin.assert:
+        that:
+          - >-
+            scraper_state.nginx.mounts |
+            selectattr('Destination', 'equalto',
+            '/usr/share/nginx/html/results') |
+            map(attribute='RW') | list == [false]
+          - >-
+            scraper_state.scraper.mounts |
+            selectattr('Destination', 'equalto', '/results') |
+            map(attribute='RW') | list == [true]
+          - >-
+            scraper_state.redis.mounts |
+            selectattr('Destination', 'equalto', '/data') |
+            map(attribute='Type') | list == ['volume']
+
+    - name: Verify Redis AOF is enabled
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-directory
+          - "{{ scraper_root }}"
+          - --project-name
+          - quotes-scraper
+          - exec
+          - -T
+          - redis
+          - redis-cli
+          - --raw
+          - CONFIG
+          - GET
+          - appendonly
+      register: scraper_aof
+      changed_when: false
+
+    - name: Check the Redis persistence setting
+      ansible.builtin.assert:
+        that:
+          - scraper_aof.stdout_lines == ['appendonly', 'yes']
+
+    - name: Verify that Chromium starts as the container user
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-directory
+          - "{{ scraper_root }}"
+          - --project-name
+          - quotes-scraper
+          - exec
+          - -T
+          - scraper
+          - node
+          - -e
+          - >-
+            require('node:fs').accessSync('/results',
+            require('node:fs').constants.W_OK);
+            require('playwright').chromium.launch({headless:true,
+            executablePath:'/usr/bin/chromium'}).then(b=>b.close())
+            .catch(e=>{console.error(e.message);process.exit(1)})
+      changed_when: false
+
+    - name: Verify that Nginx accepts HTTP requests
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/healthz
+        return_content: true
+      register: scraper_http
+      failed_when: scraper_http.status != 200 or scraper_http.content != 'ok\n'
+
+    - name: Save the container snapshot for comparing repeated deployments
+      ansible.builtin.copy:
+        content: "{{ scraper_state | to_nice_json }}\n"
+        dest: "{{ playbook_dir }}/../../../.lab/deploy-state.json"
+        mode: "0600"
+      delegate_to: localhost
+      become: false

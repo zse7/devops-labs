@@ -1,0 +1,137 @@
+---
+- name: Calculate the build context digest on the control machine
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ playbook_dir }}/../../source_digest.py"
+  delegate_to: localhost
+  become: false
+  register: scraper_digest_result
+  changed_when: false
+
+- name: Select an image tag matching the source content
+  ansible.builtin.set_fact:
+    scraper_source_digest: "{{ scraper_digest_result.stdout }}"
+    scraper_build_root: >-
+      {{ scraper_root }}/builds/{{ scraper_digest_result.stdout }}
+
+- name: Check whether the application already exists
+  ansible.builtin.command:
+    argv:
+      - docker
+      - ps
+      - --all
+      - --quiet
+      - --filter
+      - label=com.docker.compose.project=quotes-scraper
+  register: scraper_existing
+  changed_when: false
+
+- name: Prepare application and build directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ scraper_root }}"
+    - "{{ scraper_root }}/nginx"
+    - "{{ scraper_root }}/redis"
+    - "{{ scraper_build_root }}"
+
+- name: Give the container user a writable results directory
+  ansible.builtin.file:
+    path: "{{ scraper_root }}/results"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+
+- name: Copy the exact source files into the versioned build context
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../{{ item }}"
+    dest: "{{ scraper_build_root }}/"
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
+  loop:
+    - Dockerfile
+    - .dockerignore
+    - package.json
+    - package-lock.json
+    - src
+
+- name: Place the Compose configuration
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../deploy/compose.yaml"
+    dest: "{{ scraper_root }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Place the inspection helper
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../app_inspect.py"
+    dest: "{{ scraper_root }}/app_inspect.py"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Place the service configuration files
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../deploy/{{ item.src }}"
+    dest: "{{ scraper_root }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {src: nginx.conf, dest: nginx/default.conf}
+    - {src: redis.conf, dest: redis/redis.conf}
+  notify: Restart services after a configuration change
+
+- name: Render the application environment
+  ansible.builtin.template:
+    src: app.env.j2
+    dest: "{{ scraper_root }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+
+- name: Check whether the source image is already built
+  ansible.builtin.command:
+    argv:
+      - docker
+      - image
+      - inspect
+      - "quotes-scraper:{{ scraper_source_digest }}"
+  register: scraper_image
+  changed_when: false
+  failed_when: scraper_image.rc not in [0, 1]
+
+- name: Build the image only for new source content
+  ansible.builtin.command:
+    argv:
+      - docker
+      - build
+      - --tag
+      - "quotes-scraper:{{ scraper_source_digest }}"
+      - "{{ scraper_build_root }}"
+  when: scraper_image.rc == 1
+  changed_when: true
+
+- name: Start the application and wait for all health checks
+  community.docker.docker_compose_v2:
+    project_src: "{{ scraper_root }}"
+    project_name: quotes-scraper
+    state: present
+    build: never
+    pull: missing
+    wait: true
+    wait_timeout: 180
+
+- name: Apply notified configuration changes before verification
+  ansible.builtin.meta: flush_handlers

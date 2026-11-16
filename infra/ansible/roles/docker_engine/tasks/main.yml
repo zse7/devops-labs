@@ -1,0 +1,65 @@
+---
+- name: Install prerequisites for the official Docker repository
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - python3-debian
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 180
+
+- name: Prepare the package signing key directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the official Docker signing key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+    force: false
+  notify: Refresh the Docker package index
+
+- name: Determine the actual Debian package architecture
+  ansible.builtin.command: dpkg --print-architecture
+  register: docker_engine_architecture
+  changed_when: false
+
+- name: Configure the official stable Docker repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: https://download.docker.com/linux/ubuntu
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: stable
+    architectures: "{{ docker_engine_architecture.stdout }}"
+    signed_by: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+  notify: Refresh the Docker package index
+
+- name: Refresh package metadata before installation when required
+  ansible.builtin.meta: flush_handlers
+
+- name: Install Docker Engine and its CLI plugins
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    lock_timeout: 180
+
+- name: Start Docker and enable it at boot
+  ansible.builtin.systemd_service:
+    name: docker
+    state: started
+    enabled: true

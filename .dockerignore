@@ -1,4 +1,9 @@
 node_modules
+.venv
+.lab
+infra/ansible/inventories/lab
+infra/ansible/collections
+__pycache__
 out
 .git
 .gitignore

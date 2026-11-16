@@ -1,0 +1,74 @@
+---
+- name: Verify Docker installation and access
+  hosts: lab
+  gather_facts: false
+  become: true
+  vars:
+    ansible_user: admin
+  tasks:
+    - name: Read service states without changing them
+      ansible.builtin.service_facts:
+
+    - name: Check that Docker is running and enabled at boot
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['services']['docker.service']['state'] == 'running'
+          - ansible_facts['services']['docker.service']['status'] == 'enabled'
+
+    - name: Query the Docker client and server
+      ansible.builtin.command: docker version
+      register: docker_engine_version
+      changed_when: false
+
+    - name: Check the Buildx plugin
+      ansible.builtin.command: docker buildx version
+      register: docker_engine_buildx_version
+      changed_when: false
+
+    - name: Check the Compose plugin
+      ansible.builtin.command: docker compose version
+      register: docker_engine_compose_version
+      changed_when: false
+
+    - name: Read the administrator groups
+      ansible.builtin.command: id -nG admin
+      register: docker_engine_admin_groups
+      changed_when: false
+
+    - name: Confirm that admin is outside the docker group
+      ansible.builtin.assert:
+        that:
+          - "'docker' not in docker_engine_admin_groups.stdout.split()"
+
+    - name: Inspect the package repository for each Docker component
+      ansible.builtin.command:
+        argv:
+          - apt-cache
+          - policy
+          - "{{ item }}"
+      loop:
+        - docker-ce
+        - docker-ce-cli
+        - containerd.io
+        - docker-buildx-plugin
+        - docker-compose-plugin
+      register: docker_engine_package_origins
+      changed_when: false
+
+    - name: Check that each component is available from the official repository
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - >-
+            'https://download.docker.com/linux/ubuntu' in item.stdout
+      loop: "{{ docker_engine_package_origins.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Report the installed runtime and plugins
+      ansible.builtin.debug:
+        msg:
+          - "{{ docker_engine_version.stdout_lines }}"
+          - "{{ docker_engine_buildx_version.stdout }}"
+          - "{{ docker_engine_compose_version.stdout }}"
+          - "admin groups: {{ docker_engine_admin_groups.stdout }}"

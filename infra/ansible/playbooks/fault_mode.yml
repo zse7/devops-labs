@@ -1,0 +1,47 @@
+---
+- name: Change only the worker test mode and wait for readiness
+  hosts: lab
+  gather_facts: false
+  become: true
+  vars:
+    ansible_user: admin
+  tasks:
+    - name: Require an explicitly selected mode
+      ansible.builtin.assert:
+        that:
+          - fault_mode_enabled is defined
+
+    - name: Synchronize the worker restart policy configuration
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../deploy/compose.yaml"
+        dest: /srv/quotes-scraper/compose.yaml
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Configure a bounded test mode without changing proxy settings
+      ansible.builtin.lineinfile:
+        path: /srv/quotes-scraper/.env
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+        mode: "0600"
+      loop:
+        - key: ENABLE_FAULT_TESTS
+          value: "{{ (fault_mode_enabled | bool) | ternary('1', '0') }}"
+        - key: SCRAPER_RESTART_POLICY
+          value: >-
+            {{ (fault_mode_enabled | bool) | ternary('no', 'unless-stopped') }}
+      no_log: true
+      diff: false
+
+    - name: Start or recreate only the worker when its configuration changed
+      community.docker.docker_compose_v2:
+        project_src: /srv/quotes-scraper
+        project_name: quotes-scraper
+        services: [scraper]
+        dependencies: false
+        state: present
+        build: never
+        pull: never
+        wait: true
+        wait_timeout: 90

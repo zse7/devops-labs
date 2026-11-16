@@ -1,0 +1,30 @@
+---
+- name: Validate Nginx before restarting configured services
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ scraper_root }}"
+      - --project-name
+      - quotes-scraper
+      - exec
+      - -T
+      - nginx
+      - nginx
+      - -t
+  changed_when: false
+  when: scraper_existing.stdout | length > 0
+  listen: Restart services after a configuration change
+
+- name: Restart configured services only when files changed
+  community.docker.docker_compose_v2:
+    project_src: "{{ scraper_root }}"
+    project_name: quotes-scraper
+    state: restarted
+    build: never
+    pull: never
+    wait: true
+    wait_timeout: 180
+  when: scraper_existing.stdout | length > 0
+  listen: Restart services after a configuration change

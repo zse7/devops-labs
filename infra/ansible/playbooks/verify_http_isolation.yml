@@ -1,0 +1,35 @@
+---
+- name: Verify that Nginx does not expose temporary result files
+  hosts: lab
+  gather_facts: false
+  become: true
+  vars:
+    ansible_user: admin
+  tasks:
+    - name: Create a uniquely named probe owned by this check
+      ansible.builtin.tempfile:
+        state: file
+        path: /srv/quotes-scraper/results
+        prefix: .http-probe-
+        suffix: .tmp
+      register: scraper_http_probe
+
+    - name: Check HTTP isolation and clean up the probe
+      block:
+        - name: Make the probe readable to test routing independently
+          ansible.builtin.copy:
+            dest: "{{ scraper_http_probe.path }}"
+            content: "temporary HTTP isolation probe\n"
+            mode: "0644"
+
+        - name: Require HTTP 404 for an existing readable temporary file
+          ansible.builtin.uri:
+            url: >-
+              http://127.0.0.1:8080/results/{{
+              scraper_http_probe.path | basename }}
+            status_code: 404
+      always:
+        - name: Remove only the probe created by this check
+          ansible.builtin.file:
+            path: "{{ scraper_http_probe.path }}"
+            state: absent
