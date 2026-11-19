@@ -2,15 +2,16 @@
 
 Репозиторий лабораторных работ по курсу **DevOps (ПМиФИ)**.
 
-Лабораторная № 3 выполняется поэтапно. Уже доступны `make setup`, `make provision`
+Ветка `feat/ansible-deploy` содержит лабораторную № 3. Доступны `make setup`, `make provision`
 (создание Ubuntu VM, настройка SSH и установка Docker), `make vm-status`,
-`make vm-check`, `make ssh-check` и `make docker-check`. `make deploy` разворачивает
+`make ssh-check` и `make docker-check`. `make deploy` разворачивает
 Redis + скрапер + Nginx на VM; `make app-check` проверяет их готовность и настройки,
 `make http-check` проверяет доступ с Mac к HTTP-порту 8080.
-Команды Terraform/Floci предыдущей работы сохранены с префиксом
-`lab2-`: provision, deploy, run, destroy и ci.
+Лабораторные № 1 и № 2 сохранены в ветках `feat/quotes-scrapper` и
+`feat/terraform-infra`; их конфигурации и зависимости в этой ветке не используются.
+`make` без аргументов показывает краткую справку.
 
-Код Redis-обработчика уже подготовлен. `make scraper-test` запускает проверки
+Обработчик использует Redis Streams. `make scraper-test` запускает проверки
 очереди, файлов, повторной доставки и падений в отдельных контейнерах Docker
 Desktop; браузер заменён тестовыми данными. Node.js на Mac не требуется.
 Реальный сбор с quotes.toscrape.com/scroll уже проверен: 100 записей с цитатами.
@@ -96,7 +97,7 @@ make destroy     # удалить только эту VM, .lab и сгенери
 последовательно запускает ci, fault-test и lifecycle-test. После пересоздания
 прежние HTTP-ссылки относятся к удалённым результатам, их копии остаются в out/.
 
-Дополнительные команды: `vm-status`, `vm-check`, `ssh-check`, `docker-check`,
+Дополнительные команды: `vm-status`, `ssh-check`, `docker-check`,
 `app-check`, `http-check`, `http-isolation-check`, `timeout-check`, `app-logs`,
 `scraper-test`, `ansible-check`, `compose-check`, `image-import`.
 `fault-mode-on/off`, `redis-recreate`, `backup-results` — служебные шаги тестов.
@@ -125,68 +126,31 @@ GitHub Actions вызывает `make ci` с Python 3.14; CI используе�
   запуска: Redis помещён в internal-сеть без опубликованного порта. Ещё один
   наблюдавшийся случай — Running VM раньше готовности SSH, исправлен ожиданием.
 
-## Лабораторная № 2
-
-Скрапер на [Playwright](https://playwright.dev/) открывает [quotes.toscrape.com/scroll](https://quotes.toscrape.com/scroll) в Chromium и достаёт цитаты. Задание приходит из очереди SQS, готовый JSON ложится в бакет S3. Очередь и бакет описывает Terraform. Облако локальное: контейнер [Floci](https://floci.io/) `floci/floci:2.2.0` отвечает на те же запросы, что AWS. Настоящий аккаунт AWS не нужен.
-
-Точка входа — `Makefile`. Команд, которых нет в Makefile, на защите нет.
-
-## Структура
+## Структура проекта
 
 ```text
-.
-├─ Dockerfile
-├─ Makefile
-├─ compose.yaml
-├─ package.json / package-lock.json
-├─ src/scrape.js
-├─ infra/
-│  ├─ versions.tf
-│  ├─ provider.tf
-│  ├─ main.tf
-│  ├─ variables.tf
-│  ├─ outputs.tf
-│  └─ .terraform.lock.hcl
-├─ out/                      # в git не коммитится
-└─ .github/workflows/ci.yml
+Makefile                         # команды лабораторной и проверок
+Dockerfile                       # образ worker с Node.js и Chromium
+src/                             # очередь, браузер, JSON и healthcheck
+infra/cloud-init.yaml            # только первоначальный доступ
+infra/manage_vm.py               # VM, SSH и inventory
+infra/ansible/playbooks/          # сценарии подготовки, deploy и проверок
+infra/ansible/roles/              # bootstrap, SSH, Docker и приложение
+deploy/                          # рабочие Compose, Redis и Nginx
+test/                            # отдельный Compose и тесты worker
+.github/workflows/ci.yml          # make ci на GitHub
 ```
 
-## Что нужно установить
+В Makefile сначала перечислены основные действия, затем диагностика, затем
+служебные цели. Служебные `fault-mode-on/off`, `redis-recreate`, `backup-results`
+вызываются тестовыми сценариями; удалять их отдельно от этих сценариев нельзя.
+`make setup` уже входит в `make provision` через `vm-up`.
 
-1. [Docker Desktop](https://www.docker.com/products/docker-desktop/) со статусом *Engine running*.
-2. [Terraform](https://developer.hashicorp.com/terraform/install) 1.5 или новее. В CI стоит 1.17.0.
-3. `curl` и `python3` — они нужны команде `make lab2-run`, чтобы отправить задание и проверить JSON.
+## Если сайт не открывается
 
-Playwright и Chromium на хост ставить не нужно: браузер ставится внутри образа при `make build`.
-
-## Команды
-
-Все команды запускаются из корня репозитория.
-
-```bash
-make lab2-provision # поднять Floci и создать бакет с очередью через Terraform
-make lab2-deploy # собрать образ и запустить скрапер с параметрами из Terraform
-make lab2-run    # отправить одно задание в SQS и дождаться JSON в бакете
-make lab2-destroy # удалить ресурсы Terraform и остановить окружение
-make build       # только собрать образ quotes-scraper
-make clean       # удалить образ и каталог out/
-make lab2-ci     # fmt, validate и plan для Terraform
-```
-
-`make lab2-provision` можно запускать повторно: если бакет и очередь уже совпадают с файлами в `infra/`, Terraform напишет `No changes`.
-
-`make lab2-deploy` берёт имя бакета и адрес очереди из выходов Terraform и передаёт их в контейнер переменными окружения. С хоста очередь доступна как `localhost:4566`, из контейнера скрапера — как `floci:4566`.
-
-`make lab2-run` имеет смысл после `make lab2-deploy`. Скрапер уже ждёт сообщения. Команда кладёт в очередь одну записку, дожидается удаления этой записки и печатает число цитат в `result.json`.
-
-`make lab2-destroy` тоже можно запускать повторно. Второй раз удалять уже нечего, команда завершается без ошибки и оставляет окружение выключенным.
-
-Ключи в `infra/provider.tf` — фиктивные `test` / `test` для Floci, не ключи настоящего AWS.
-
-## Если сайт не открывается из контейнера
-
-`page.goto: Timeout` при успешной отправке сообщения означает сбой на этапе обращения браузера к сайту. Одной из причин может быть отсутствие прямого HTTPS-доступа из Docker, когда на компьютере используется прокси.
-
-При необходимости задай `SCRAPER_PROXY_SERVER` в локальном `.env`: полный URL доступного из контейнера HTTP- или SOCKS-прокси. Например, если прокси работает на твоём компьютере, адрес может иметь вид `http://host.docker.internal:порт` с его реальным портом. `localhost` внутри контейнера означает сам контейнер. Значение передаётся только Chromium; подключения SDK к локальному Floci не меняются. Для прямого подключения оставь переменную пустой или удали её.
-
-После изменения выполни `make lab2-deploy`, затем `make lab2-run`. `.env` исключён из Git и контекста сборки Docker. При смене сети адрес прокси может потребовать обновления. Ошибочное задание остаётся в SQS и после истечения visibility timeout может выполниться повторно; новый `make lab2-run` отправляет ещё одно сообщение.
+`page.goto: Timeout` после получения задания означает, что браузер не смог
+завершить обращение к странице. Проверь сеть VM и логи: `make app-logs`.
+При необходимости передай доступный из VM прокси через `SCRAPER_PROXY_SERVER`
+в окружении запуска `make deploy`. Не используй `localhost` для прокси на Mac:
+внутри контейнера это адрес самого контейнера. Для прямого доступа оставь
+переменную пустой. Прокси передаётся Chromium, соединение с Redis не меняется.

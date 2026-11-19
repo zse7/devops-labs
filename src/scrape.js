@@ -95,6 +95,7 @@ async function handleJob(client, config, entry, scrape, checkpoint) {
     }
     await checkpoint(client, jobId, "after-save");
     if (heartbeatError) throw heartbeatError;
+    // воркер подтверждает задание что запись обработана и рез сохранен
     await client.sendCommand(["XACK", config.stream, config.group, messageId]);
     console.log(`ACKED ${jobId} ${messageId}`);
   } finally {
@@ -147,6 +148,7 @@ async function runWorker({
     await fs.writeFile("/tmp/quotes-scraper.ready", config.consumer);
     console.log(`READY ${config.consumer}`);
     let cursor = "0-0";
+    // воркер ждет задания
     while (!stopping) {
       try {
         const claimed = await reader.sendCommand([
@@ -177,6 +179,7 @@ async function runWorker({
           ]);
           entry = streams?.[0]?.[1]?.[0];
         }
+        // получил запись - вызови обработку задания
         if (entry) await handleJob(client, config, entry, scrape, checkpoint);
       } catch (error) {
         if (!reader.isOpen || !client.isOpen) throw error;

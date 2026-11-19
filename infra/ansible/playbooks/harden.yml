@@ -1,8 +1,11 @@
 ---
+# организует создание админа и защиту SSH
+
 # Bootstrap заканчивается реальным новым входом admin и проверкой sudo.
 - name: Prepare and verify admin before changing access
   ansible.builtin.import_playbook: bootstrap.yml
 
+# защита SSH ролью ssh_hardening
 - name: Harden SSH through the verified admin account
   hosts: lab
   gather_facts: false

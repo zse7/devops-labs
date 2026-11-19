@@ -1,4 +1,4 @@
-"""Создание лабораторной VM и подготовка проверяемого SSH-доступа."""
+# Создание VM и подготовка проверяемого SSH-доступа
 
 import argparse
 import json
@@ -77,10 +77,12 @@ def address_of(args):
 
 
 def up(args):
+    # Запустить multipass list --format json. Получить список виртуалок. Найти машину с нашим именем.
     mp = [args.multipass]
     machines = json.loads(run(mp + ["list", "--format", "json"], capture=True).stdout)[
         "list"
     ]
+    # Если нужная VM найдена, existing содержит её описание
     existing = next((vm for vm in machines if vm["name"] == args.name), None)
     marker = LAB / "vm.json"
     if marker.exists():
@@ -93,8 +95,8 @@ def up(args):
             "VM с таким именем уже есть, но она не зарегистрирована в .lab. Не изменяю её."
         )
 
+    # Создание виртуалки через Multipass если еще нет VM
     if not existing:
-        # Маркер сохраняется до launch, чтобы после таймаута не потерять созданную VM.
         write_if_changed(marker, json.dumps({"name": args.name}) + "\n")
         run(
             mp
@@ -116,6 +118,8 @@ def up(args):
             ],
             timeout=960,
         )
+
+    # если она есть и остановлена
     elif existing["state"] == "Stopped":
         run(mp + ["start", args.name], timeout=180)
     elif existing["state"] != "Running":
@@ -166,7 +170,9 @@ def up(args):
 
     address = address_of(args)
     user = None
+    # выбор пользователя
     for candidate in ("admin", "lab-bootstrap"):
+        # Можем ли мы войти этим пользователем и выполнить sudo?
         attempt = subprocess.run(
             ssh_command(args, address, candidate, "sudo -n true"),
             capture_output=True,
@@ -192,7 +198,7 @@ def up(args):
     if "ID=ubuntu\n" not in release or 'VERSION_ID="24.04"' not in release:
         raise SystemExit("VM не соответствует Ubuntu 24.04.")
 
-    # Аргументы SSH сохраняются с кавычками для путей с пробелами.
+    # Формирование inventory
     inventory = {
         "all": {
             "children": {

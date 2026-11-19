@@ -20,6 +20,7 @@ import yaml
 from manage_vm import LAB, ROOT, ssh_command
 
 
+# Прочитать адрес VM из inventory
 def connection():
     host = yaml.safe_load(
         (ROOT / "infra/ansible/inventories/lab/hosts.yml").read_text()
@@ -28,6 +29,7 @@ def connection():
     return SimpleNamespace(name=name), host["ansible_host"]
 
 
+# выполняет переданную команду в Ubuntu, подключаясь как админ (Запустить команду через SSH)
 def remote(arguments, *, timeout=15):
     args, address = connection()
     result = subprocess.run(
@@ -40,6 +42,7 @@ def remote(arguments, *, timeout=15):
     return result.stdout
 
 
+# Добавить команду Docker Compose и папку проекта
 def compose(arguments, *, timeout=15):
     return remote(
         [
@@ -57,6 +60,7 @@ def compose(arguments, *, timeout=15):
     )
 
 
+# Запустить Redis-клиент внутри контейнера и разобрать ответ
 def redis(arguments, *, timeout=15):
     return json.loads(
         compose(
@@ -97,6 +101,7 @@ def enqueue(url, *, fault_phase=None):
             raise ValueError("Неизвестная точка сбоя")
         redis(["SET", f"lab:fault:{record['job_id']}", fault_phase, "EX", "300", "NX"])
     try:
+        # Задание отправляется в Redis
         message_id = redis(
             ["XADD", "jobs", "*", "job_id", record["job_id"], "url", url]
         )

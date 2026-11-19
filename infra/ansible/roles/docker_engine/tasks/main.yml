@@ -9,6 +9,7 @@
     cache_valid_time: 3600
     lock_timeout: 180
 
+# Подготовить зависимости apt
 - name: Prepare the package signing key directory
   ansible.builtin.file:
     path: /etc/apt/keyrings
@@ -17,6 +18,7 @@
     group: root
     mode: "0755"
 
+# Добавить ключ официального Docker-репозитория
 - name: Download the official Docker signing key
   ansible.builtin.get_url:
     url: https://download.docker.com/linux/ubuntu/gpg
@@ -27,11 +29,13 @@
     force: false
   notify: Refresh the Docker package index
 
+# Определить архитектуру Ubuntu
 - name: Determine the actual Debian package architecture
   ansible.builtin.command: dpkg --print-architecture
   register: docker_engine_architecture
   changed_when: false
 
+# Подключить официальный репозиторий
 - name: Configure the official stable Docker repository
   ansible.builtin.deb822_repository:
     name: docker
@@ -44,9 +48,11 @@
     mode: "0644"
   notify: Refresh the Docker package index
 
+# Обновить список пакетов
 - name: Refresh package metadata before installation when required
   ansible.builtin.meta: flush_handlers
 
+# Установить Docker и плагины
 - name: Install Docker Engine and its CLI plugins
   ansible.builtin.apt:
     name:
@@ -55,9 +61,10 @@
       - containerd.io
       - docker-buildx-plugin
       - docker-compose-plugin
-    state: present
+    state: present  # Пакеты должны быть установлены
     lock_timeout: 180
 
+# Запустить службу и включить автозапуск
 - name: Start Docker and enable it at boot
   ansible.builtin.systemd_service:
     name: docker

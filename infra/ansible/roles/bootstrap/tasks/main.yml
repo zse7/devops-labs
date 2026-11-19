@@ -1,4 +1,6 @@
 ---
+# Создать пользователя admin: обеспечь существование пользователя admin с
+# домашней папкой и оболочкой bash
 - name: Create the permanent administrator
   ansible.builtin.user:
     name: admin
@@ -8,12 +10,14 @@
     groups: sudo
     append: true
 
+# Добавить ему наш публичный SSH-ключ
 - name: Authorize the lab key for admin
   ansible.posix.authorized_key:
     user: admin
     state: present
     key: "{{ lookup('ansible.builtin.file', bootstrap_public_key_path) }}"
 
+# Разрешить административные команды через sudo
 - name: Configure sudo for key-based administration
   ansible.builtin.copy:
     dest: /etc/sudoers.d/90-lab-admin

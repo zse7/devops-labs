@@ -1,4 +1,7 @@
 ---
+# Создаёт admin через роль и проверяет новый вход
+
+# Создать постоянного admin и проверить новое соединение как admin
 - name: Prepare the permanent administrator
   hosts: lab
   become: true
@@ -7,6 +10,7 @@
     bootstrap_public_key_path: >-
       {{ playbook_dir }}/../../../.lab/id_ed25519.pub
   pre_tasks:
+    # Это подходящая Ubuntu?
     - name: Check the target operating system
       ansible.builtin.assert:
         that:
@@ -16,7 +20,7 @@
   roles:
     - bootstrap
 
-# Новый play использует admin независимо от пользователя исходного inventory.
+# Новый play использует admin независимо от пользователя исходного inventory
 - name: Verify a new connection as admin
   hosts: lab
   gather_facts: false

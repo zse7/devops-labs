@@ -28,16 +28,17 @@
     that:
       - item in ssh_hardening_effective.stdout_lines
   loop:
-    - permitrootlogin no
-    - passwordauthentication no
+    - permitrootlogin no  # root напрямую по SSH не входит
+    - passwordauthentication no  # парольные способы закрыты;
     - kbdinteractiveauthentication no
-    - pubkeyauthentication yes
+    - pubkeyauthentication yes  # требуется публичный ключ
     - authenticationmethods publickey
-    - allowusers admin
+    - allowusers admin  # разрешён только admin
 
 - name: Apply the verified SSH policy
   ansible.builtin.meta: flush_handlers
 
+# Закрытие временного доступа
 - name: Disable the temporary bootstrap shell and password
   ansible.builtin.user:
     name: lab-bootstrap

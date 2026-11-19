@@ -1,5 +1,5 @@
 ---
-scraper_root: /srv/quotes-scraper
-scraper_http_port: 8080
+scraper_root: /srv/quotes-scraper  # корневая папка приложения на Ubuntu
+scraper_http_port: 8080  # орт для получения результатов
 scraper_proxy_server: >-
   {{ lookup('ansible.builtin.env', 'SCRAPER_PROXY_SERVER') }}

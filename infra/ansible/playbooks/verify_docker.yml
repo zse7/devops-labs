@@ -1,4 +1,6 @@
 ---
+# Проверяет установленный Docker
+
 - name: Verify Docker installation and access
   hosts: lab
   gather_facts: false
@@ -9,17 +11,20 @@
     - name: Read service states without changing them
       ansible.builtin.service_facts:
 
+    # Docker работает и включён в автозапуск
     - name: Check that Docker is running and enabled at boot
       ansible.builtin.assert:
         that:
           - ansible_facts['services']['docker.service']['state'] == 'running'
           - ansible_facts['services']['docker.service']['status'] == 'enabled'
 
+    # Docker CLI и сервер отвечаю
     - name: Query the Docker client and server
       ansible.builtin.command: docker version
       register: docker_engine_version
       changed_when: false
 
+    # Buildx и Compose доступны
     - name: Check the Buildx plugin
       ansible.builtin.command: docker buildx version
       register: docker_engine_buildx_version
@@ -30,6 +35,7 @@
       register: docker_engine_compose_version
       changed_when: false
 
+    # admin не добавлен в группу docker
     - name: Read the administrator groups
       ansible.builtin.command: id -nG admin
       register: docker_engine_admin_groups

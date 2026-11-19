@@ -1,4 +1,7 @@
 ---
+# проверка трех ожидаемых сервисов (Nginx открыт и отвечает, worker может
+# записывать резы
+# redis использует постоянный том, хромиум запускается)
 - name: Verify the application configuration and readiness
   hosts: lab
   gather_facts: false

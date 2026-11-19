@@ -1,15 +1,20 @@
 ---
+# основной сценарий подготовки ubuntu
+
+# настроить админа и ssh
 - name: Prepare admin and harden SSH
   ansible.builtin.import_playbook: harden.yml
 
+# установить докер через роль docker_engine
 - name: Install the container runtime
-  hosts: lab
-  gather_facts: true
+  hosts: lab  # работать с машинами группы lab из inventory
+  gather_facts: true  # собрать сведения об убунту
   become: true
   vars:
     ansible_user: admin
   roles:
     - docker_engine
 
+# проверить результат через verify_docker.yml
 - name: Verify the container runtime
   ansible.builtin.import_playbook: verify_docker.yml

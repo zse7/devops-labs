@@ -1,4 +1,5 @@
-"""Подготовка локального SSH-ключа и cloud-init без создания VM."""
+# Подготовить локальные данные для создания VM
+# Подготовка локального SSH-ключа и cloud-init без создания VM
 
 from pathlib import Path
 import subprocess

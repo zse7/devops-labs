@@ -40,6 +40,8 @@
     - "{{ scraper_root }}/redis"
     - "{{ scraper_build_root }}"
 
+# Отдельно создаётся results с владельцем 1000:1000,
+# потому что под этим пользователем работает процесс worker в контейнере
 - name: Give the container user a writable results directory
   ansible.builtin.file:
     path: "{{ scraper_root }}/results"
@@ -63,10 +65,11 @@
     - package-lock.json
     - src
 
+# перенос файлов с мака в убунту
 - name: Place the Compose configuration
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../../../deploy/compose.yaml"
-    dest: "{{ scraper_root }}/compose.yaml"
+    src: "{{ playbook_dir }}/../../../deploy/compose.yaml"  # откуда взять
+    dest: "{{ scraper_root }}/compose.yaml"  # куда положить
     owner: root
     group: root
     mode: "0644"
@@ -91,6 +94,7 @@
     - {src: redis.conf, dest: redis/redis.conf}
   notify: Restart services after a configuration change
 
+# заполнить шаблон и сохранить результат
 - name: Render the application environment
   ansible.builtin.template:
     src: app.env.j2
@@ -101,6 +105,7 @@
   no_log: true
   diff: false
 
+#  проверка сущестования образа и сохранение реза в переменную
 - name: Check whether the source image is already built
   ansible.builtin.command:
     argv:
@@ -125,12 +130,13 @@
 
 - name: Start the application and wait for all health checks
   community.docker.docker_compose_v2:
+    # Папка на Ubuntu, где находится Compose-файл
     project_src: "{{ scraper_root }}"
-    project_name: quotes-scraper
-    state: present
-    build: never
-    pull: missing
-    wait: true
+    project_name: quotes-scraper  # Имя группы контейнеров приложения
+    state: present  # Обеспечить запуск описанного приложения
+    build: never  # Здесь не собирать образ
+    pull: missing  # Скачивать недостающие образы
+    wait: true  # Дождаться готовности сервисов
     wait_timeout: 180
 
 - name: Apply notified configuration changes before verification
